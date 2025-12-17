@@ -1,0 +1,364 @@
+# Loading needed Libraries and getting a glimpse of the data
+library("readr")
+library("dplyr")
+library("Information")
+library("caret")
+library("car")
+library("tidypredict")
+
+#Loading In Data
+org <- read_csv("~/Desktop/employee_data/org.csv", col_names = TRUE)
+rating <- read_csv("~/Desktop/employee_data/rating.csv", col_names = TRUE)
+survey <- read_csv("~/Desktop/employee_data/survey.csv", col_names = TRUE)
+
+# View the structure of org dataset
+glimpse(org)
+
+# Count Active and Inactive employees
+org %>% 
+  count(status)
+
+# Calculate turnover rate
+org %>% 
+  summarise(avg_turnover_rate = mean(turnover))
+
+# Calculate level wise turnover rate
+df_level <- org %>% 
+  group_by(level) %>% 
+  summarise(turnover_level = mean(turnover))
+
+# Check the results
+df_level
+
+# Visualize the results
+ggplot(df_level, aes(x = level, y = turnover_level)) + 
+  geom_col()
+
+# Calculate location wise turnover rate
+df_location <- org %>% 
+  group_by(location) %>% 
+  summarize(turnover_location = mean(turnover))
+
+# Check the results
+df_location
+
+# Visualize the results
+ggplot(df_location, aes(x = location, y = turnover_location )) +
+  geom_col()
+
+# Count the number of employees across levels
+org %>% 
+  count(level)
+
+# Select the employees at Analyst and Specialist level
+org2 <- org %>%
+  filter(level %in% c("Analyst","Specialist")) 
+
+# Validate the results
+org2 %>% 
+  count(level)
+
+# View the structure of rating dataset
+glimpse(rating)
+
+# Complete the code to join rating to org2 dataset
+org3 <- left_join(org2, rating, by = "emp_id")
+
+# Calculate rating wise turnover rate
+df_rating <- org3 %>% 
+  group_by(rating) %>% 
+  summarise(turnover_rating = mean(turnover))
+
+# Check the result
+df_rating
+
+# View the structure of survey dataset
+glimpse(survey)
+
+# Complete the code to join survey to org3 dataset
+org_final <- left_join(org3,survey,  by = "mgr_id" )
+
+# Compare manager effectiveness scores
+ggplot(org_final, aes(x = status, y = mgr_effectiveness)) +
+  geom_boxplot()
+
+# View the structure of org final dataset
+glimpse(org_final)
+
+# Number of variables in the dataset
+variables <- ncol(glimpse(org_final))
+
+# Compare the travel distance of Active and Inactive employees
+ggplot(org_final, aes(x = status, y = distance_from_home)) +
+  geom_boxplot()
+
+#loading updated Final Dataset
+org_final1 <- read_csv("~/Desktop/employee_data/org_final.csv",col_names = TRUE)
+
+# View the structure of updated org final dataset
+glimpse(org_final1)
+
+# Add age_diff
+emp_age_diff <- org_final1 %>%
+  mutate(age_diff = mgr_age - emp_age)
+
+# Plot the distribution of age difference
+ggplot(emp_age_diff, aes(x = status, y = age_diff)) + 
+  geom_boxplot()
+
+# Add job_hop_index
+emp_jhi <- emp_age_diff %>% 
+  mutate(job_hop_index =  total_experience / no_previous_companies_worked )
+
+# Compare job hopping index of Active and Inactive employees
+ggplot(emp_jhi, aes(x = status, y = job_hop_index)) + 
+  geom_boxplot()
+
+# Add tenure
+emp_tenure <- emp_jhi %>%
+  mutate(tenure = ifelse(status == "Active", 
+                         time_length(interval(date_of_joining, cutoff_date), 
+                                     "years"), 
+                         time_length(interval(date_of_joining, last_working_date), 
+                                     "years")))
+
+# Compare tenure of active and inactive employees
+ggplot(emp_tenure, aes(x = status, y = tenure)) + 
+  geom_boxplot()
+
+# Plot the distribution of compensation
+ggplot(emp_tenure, aes(x = compensation)) + 
+  geom_histogram()
+
+# Plot the distribution of compensation across levels
+ggplot(emp_tenure, 
+       aes(x = level, y = compensation)) +
+  geom_boxplot()
+
+# Compare compensation of Active and Inactive employees across levels
+ggplot(emp_tenure, 
+       aes(x = level, y = compensation, fill = status)) + 
+  geom_boxplot()
+
+# Add median_compensation and compa_ratio
+emp_compa_ratio <- emp_tenure %>%  
+  group_by(level) %>%   
+  mutate(median_compensation = median(compensation), 
+         compa_ratio = compensation/median_compensation)
+
+# Look at the median compensation for each level           
+emp_compa_ratio %>% 
+  distinct(level, median_compensation)
+
+# Add compa_level
+emp_final <- emp_compa_ratio %>%  
+  mutate(compa_level = case_when(
+    compa_ratio > 1 ~ "Above",
+    TRUE ~ "Below" ))
+
+# Compare compa_level for Active & Inactive employees
+ggplot(emp_final, aes(x = status, fill = compa_level)) + 
+  geom_bar(position = "fill")
+
+# Compute Information Value 
+IV <- create_infotables(data = emp_final, y =  "turnover")
+
+# Print Information Value 
+IV$Summary
+
+# Set seed of 567
+set.seed(567)
+
+# Store row numbers for training dataset: index_train
+index_train <- createDataPartition(emp_final$turnover, p = 0.7, list = FALSE)
+
+# Create training dataset: train_set
+train_set <- emp_final[index_train, ]
+
+# Create testing dataset: test_set
+test_set <- emp_final[-index_train, ]
+
+# Calculate turnover proportion in train_set
+train_set %>% 
+  count(status) %>% 
+  mutate(prop = n / sum(n))
+
+# Calculate turnover proportion in test_set
+test_set %>% 
+  count(status) %>% 
+  mutate(prop = n / sum(n))
+
+# Taking some columns from the dataset
+train_set_multi <- emp_final %>% select( (-c("emp_id", "mgr_id","date_of_joining", "last_working_date", "cutoff_date", "mgr_age", "emp_age","median_compensation","department","status",, "tenure")))
+train_set_multi
+
+# Build a simple logistic regression model
+simple_log <- glm(turnover~percent_hike, 
+                  family = "binomial", data = train_set_multi)
+
+# Print summary
+summary(simple_log)
+
+# Build a multiple logistic regression model
+multi_log <- glm(
+  # Manually list variables, *omitting* 'compa_level' and 'job_hop_index'
+  turnover ~ location + level + gender + rating + mgr_rating + mgr_reportees + 
+    mgr_tenure + compensation + percent_hike + hiring_score + hiring_source + 
+    no_previous_companies_worked + distance_from_home + total_dependents + 
+    marital_status + education + promotion_last_2_years + no_leaves_taken + 
+    total_experience + monthly_overtime_hrs + mgr_effectiveness + 
+    career_satisfaction + perf_satisfaction + work_satisfaction + 
+    age_diff + compa_ratio ,  
+  family = "binomial", 
+  data = train_set_multi,
+  na.action = na.omit
+)
+# Print summary
+summary(multi_log)
+
+# Check for multicollinearity
+vif(multi_log)
+
+# Which variable has the highest VIF?
+highest <- "level"
+
+# Taking level out of the model
+model_1 <- glm(
+  # Manually list variables, *omitting* 'compa_level' and 'job_hop_index'
+  turnover ~ location  + gender + rating + mgr_rating + mgr_reportees + 
+    mgr_tenure + percent_hike + hiring_score + hiring_source + 
+    no_previous_companies_worked + distance_from_home + total_dependents + 
+    marital_status + education + promotion_last_2_years + no_leaves_taken + 
+    total_experience + monthly_overtime_hrs + mgr_effectiveness + 
+    career_satisfaction + perf_satisfaction + work_satisfaction + 
+    age_diff + compa_ratio ,  
+  family = "binomial", 
+  data = train_set_multi,
+  na.action = na.omit
+)
+# Check for multicollinearity again
+vif(model_1)
+
+# Which variable has the highest VIF?
+highest <- "compensation"
+
+#Taking Compensation out 
+ model_2 <-  glm(
+   # Manually list variables, *omitting* 'compa_level' and 'job_hop_index'
+   turnover ~ location  + gender + rating + mgr_rating + mgr_reportees + 
+     mgr_tenure + percent_hike + hiring_score + hiring_source + 
+     no_previous_companies_worked + distance_from_home + total_dependents + 
+     marital_status + education + promotion_last_2_years + no_leaves_taken + 
+     total_experience + monthly_overtime_hrs + mgr_effectiveness + 
+     career_satisfaction + perf_satisfaction + work_satisfaction + 
+     age_diff + compa_ratio ,  
+   family = "binomial", 
+   data = train_set_multi,
+   na.action = na.omit
+ )
+ 
+# Check for multicollinearity again to see if we dealt with multicolinearity
+vif(model_2)
+
+# Build the final logistic regression model
+final_log <- glm(turnover ~location  + gender + rating + mgr_rating + mgr_reportees + 
+                   mgr_tenure + percent_hike + hiring_score + hiring_source + 
+                   no_previous_companies_worked + distance_from_home + total_dependents + 
+                   marital_status + education + promotion_last_2_years + no_leaves_taken + 
+                   total_experience + monthly_overtime_hrs + mgr_effectiveness + 
+                   career_satisfaction + perf_satisfaction + work_satisfaction + 
+                   age_diff + compa_ratio+ job_hop_index + tenure + compa_levelBelow,  
+                 family = "binomial", 
+                 data = train_set_multi)
+
+# Print summary 
+summary(final_log )
+
+# Make predictions for training dataset
+prediction_train <- predict(final_log, newdata = train_set, 
+                            type = "response")
+
+# Look at the prediction range
+hist(prediction_train)
+
+# Make predictions for testing dataset
+prediction_test <- predict(final_log, newdata = test_set, type = "response")
+
+# Look at the prediction range
+hist(prediction_test)
+
+# Print the probability of turnover
+prediction_test[c(150, 200)]
+
+# Classify predictions using a cut-off of 0.5
+prediction_categories <- ifelse(prediction_test > 0.5, 1, 0)
+
+# Construct a confusion matrix
+conf_matrix <- table(prediction_categories, test_set$turnover)
+conf_matrix
+
+# Call confusionMatrix
+confusionMatrix(conf_matrix)
+
+# Extract the accuracy from the confusionMatrix result and assign the accuracy of the model to accuracy
+accuracy <- 0.9335
+
+# Calculate probability of turnover
+emp_risk <- emp_final %>%
+  filter(status == "Active") %>%
+  tidypredict_to_column(final_log)
+
+# Run the code
+emp_risk %>% 
+  select(emp_id, fit) %>% 
+  slice_max(n = 2, fit) 
+
+# Create turnover risk buckets
+emp_risk_bucket <- emp_risk %>% 
+  mutate(risk_bucket = cut(fit, breaks = c(0, 0.5, 0.6, 0.8, 1), 
+                           labels = c("no-risk", "low-risk", 
+                                      "medium-risk", "high-risk")))
+
+# Count employees in each risk bucket
+emp_risk_bucket %>% 
+  count(risk_bucket)
+
+# Plot histogram of percent hike
+ggplot(emp_final, aes(x = percent_hike)) +
+  geom_histogram(binwidth = 3)
+
+# Create salary hike_range of Analyst level employees
+emp_hike_range <- emp_final %>% 
+  filter(level == "Analyst") %>% 
+  mutate(hike_range = cut(percent_hike, breaks = c(0, 10, 15, 20),
+                          include.lowest = TRUE, 
+                          labels = c("0 to 10", 
+                                     "11 to 15", "16 to 20")))
+
+# Calculate the turnover rate for each salary hike range
+df_hike <- emp_hike_range %>% 
+  group_by(hike_range) %>% 
+  summarise(turnover_rate_hike = mean(turnover))
+
+# Check the results
+df_hike
+
+# Visualize the results
+ggplot(df_hike, aes(x = hike_range, y = turnover_rate_hike)) + 
+  geom_col()
+
+median_salary_analyst <-51840
+turnover_cost<-40000
+
+# Compute extra cost
+extra_cost <- median_salary_analyst * (5/100)
+
+# Compute savings
+savings <-  turnover_cost * 17/100
+
+# Calculate ROI
+ROI <- (savings / extra_cost) * 100
+
+# Print ROI
+cat(paste0("The return on investment is ", round(ROI), "%!"))
+
