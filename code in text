@@ -88,15 +88,16 @@ glimpse(org_final)
 # Number of variables in the dataset
 variables <- ncol(glimpse(org_final))
 
-# Compare the travel distance of Active and Inactive employees
-ggplot(org_final, aes(x = status, y = distance_from_home)) +
-  geom_boxplot()
 
 #loading updated Final Dataset
 org_final1 <- read_csv("~/Desktop/employee_data/org_final.csv",col_names = TRUE)
 
 # View the structure of updated org final dataset
 glimpse(org_final1)
+
+# Compare the travel distance of Active and Inactive employees
+ggplot(org_final1, aes(x = status, y = distance_from_home)) +
+  geom_boxplot()
 
 # Add age_diff
 emp_age_diff <- org_final1 %>%
